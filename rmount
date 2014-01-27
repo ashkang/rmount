@@ -1,0 +1,185 @@
+#!/bin/bash
+
+RED="\033[1;31m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+CYAN="\033[1;36m"
+RESET="\033[0m"
+
+trap "exit 1" TERM
+export __me=$$
+
+# EDIT THIS LINE POINTING TO YOUR CONFIGURATION FILE
+config="$HOME/bin/rmount.conf"
+
+jshon=`which jshon` || die "jshon not found"
+sshfs=`which sshfs` || die "sshfs not found"
+umount=`which umount` || die "umount not found"
+
+function clean_up
+{
+    return 0
+}
+
+function die
+{
+    type -p clean_up
+
+    if [ $? -eq 0 ]; then
+        clean_up
+    fi
+
+    type -p "$2"
+
+    if [ $? -eq 0 ]; then
+        $2
+    fi
+
+    echo -e "${RED}error:${RESET} $1"
+    kill -s TERM $__me
+
+    return 0
+}
+
+function warn
+{
+    echo -e "${YELLOW}warning:${RESET} $1"
+
+    return 0
+}
+
+function do_mount
+{
+    host=`${jshon} -e $1 -e host -u -F $config` || \
+        die "mount $1: unable to find configuration: $1.host"
+    user=`${jshon} -e $1 -e user -u -F $config` || \
+        die "mount $1: unable to find configuration: $1.user"
+    remote_location=`${jshon} -e $1 -e remote_location -u -F $config` || \
+        die "mount $1: configuration: $1.remote_location"
+    local_location=`${jshon} -e $1 -e local_location -u -F $config` || \
+        die "mount $1: configuration: $1.local_location"
+
+    if [ ! -d "${local_location}" ]; then
+        warn "local directory ${CYAN}${local_location}${RESET} does not exist. attempting to create..."
+        err=$( { mkdir "${local_location}"; } 2>&1 )
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}failed${RESET}"
+            echo -e "$err"
+            return 1
+        else
+            echo -e "${GREEN}done${RESET}"
+        fi
+    fi
+
+    echo -ne "attempting to mount ${CYAN}$1${RESET}... "
+    err=$( { ${sshfs} "${user}@${host}:${remote_location}" "${local_location}"; } 2>&1 )
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed${RESET}"
+        echo -e "$err"
+        return 1
+    else
+        echo -e "${GREEN}ok${RESET}"
+        return 0
+    fi
+}
+
+function do_umount
+{
+    local_location=`${jshon} -e $1 -e local_location -u -F $config` \
+        || die "umount $1: configuration: $1.local_location"
+
+    echo -ne "attempting to unmount ${CYAN}$1${RESET}... "
+    err=$( { ${umount} "${local_location}"; } 2>&1 )
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed${RESET}"
+        echo -e "$err"
+        return 1
+    else
+        echo -e "${GREEN}ok${RESET}"
+        return 0
+    fi
+}
+
+declare -A flags
+args=`getopt m::u::t:hva $*` || die "invalid argument specified"
+
+set -- $args
+for i
+do
+    case "$i"
+        in
+        -a)
+            flags[all]=1;
+            shift;;
+        -m)
+            flags[do_mount]=1;
+            shift;;
+        -u)
+            flags[do_umount]=1;
+            shift;;
+        -t)
+            flags[target]="$2"; shift;
+            shift;;
+        -v)
+            flags[version]=1;
+            shift;;
+        -h)
+            flags[help]=1;
+            shift;;
+        --)
+            flags[target]="$2";
+            shift;
+            break;;
+    esac
+done
+
+# echo "all = ${flags[all]}"
+# echo "mount = ${flags[do_mount]}"
+# echo "umount = ${flags[do_umount]}"
+# echo "target = ${flags[target]}"
+# echo "help = ${flags[help]}"
+# echo "version = ${flags[version]}"
+
+targets=()
+
+if [ -n "${flags[help]}" ]; then
+    echo "usage: $0 -mu -t mount_config [hva]"
+    exit 0
+fi
+
+if [ -n "${flags[version]}" ]; then
+    echo "rmount version 0.1"
+    exit 0
+fi
+
+if [ "${flags[target]}" != "" ]; then
+    targets+=( "${flags[target]}" )
+fi
+
+if [ -n "${flags[all]}" ]; then
+    keys=`${jshon} -k -F ${config} 2>/dev/null` || \
+        die "unable to read all configuration keys"
+    for i in $keys; do
+        use=`${jshon} -e $i -e use -u -F ${config}` || \
+            die "unable to read configuration: $i.use"
+        if [ "${use}" == "true" ]; then
+            targets+=( "$i" )
+        fi
+    done
+fi
+
+if [ -n "${flags[do_mount]}" ]; then
+    operation="do_mount";
+elif [ -n "${flags[do_umount]}" ]; then
+    operation="do_umount"
+else
+    warn "no operations specified, assuming mount"
+    operation="do_mount"
+fi
+
+for i in ${targets[@]}; do
+    $operation "$i"
+done
+
+exit 0
