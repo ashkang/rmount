@@ -2,8 +2,8 @@
     "example": {
         "host": "example.org",
         "user": "johndoe",
-        "remote_location": "/home/john/doe",
-        "local_location": "/home/john/mnt/doe/",
+        "remote_location": "/home/john/",
+        "local_location": "/home/john/mnt/jdoe/",
         "use": true
     }
 }
